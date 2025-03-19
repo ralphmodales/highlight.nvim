@@ -1,0 +1,56 @@
+*highlight.txt*   Kindle-style highlights and notes in Neovim
+
+==============================================================================
+INTRODUCTION                                    *highlight*
+
+highlight-notes.nvim brings Kindle-like highlighting and note-taking to Neovim.
+Highlight text and attach notes, with numbered markers for easy access.
+
+==============================================================================
+COMMANDS                                        *highlight-commands*
+
+:KindleHighlight        Highlight word under cursor and add optional note
+:KindleNote             Show note for highlight at cursor
+:KindleNotebook         List all highlights and notes
+:KindleClear            Clear all highlights and notes
+
+==============================================================================
+MAPPINGS                                        *highlight-mappings*
+
+The following mappings are available by default:
+
+<leader>kh              Highlight word under cursor and add optional note
+<leader>kn              Show note for highlight at cursor
+<leader>kl              List all highlights and notes
+<leader>kc              Clear all highlights and notes
+
+==============================================================================
+CONFIGURATION                                   *highlight-config*
+
+Example: >
+  require('highlight_notes').setup({
+    highlight = { bg = '#ffcc00', fg = '#000000' },
+    keymaps = {
+      highlight = '<leader>kh',
+      show_note = '<leader>kn',
+      notebook = '<leader>kl',
+      clear = '<leader>kc',
+    }
+  })
+<
+
+==============================================================================
+NOTEBOOK VIEW                                   *highlight-notebook*
+
+The notebook view shows all highlights and their associated notes in a buffer.
+Each highlight is displayed with its context, note number, and note content.
+
+==============================================================================
+LICENSE                                         *highlight-license*
+
+MIT License
+
+==============================================================================
+                                                *highlight-about*
+
+Repo: https://github.com/ralphmodales/highlight.nvim
