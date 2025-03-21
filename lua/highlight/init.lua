@@ -56,66 +56,58 @@ local function get_visual_selection()
 	local end_pos = vim.fn.getpos("'>")
 	local line = start_pos[2] - 1
 	local start_col = start_pos[3] - 1
-	local end_col = end_pos[3]
+	local end_col = end_pos[3] - 1
 
-	if vim.fn.mode() == #"v" then
-		local line_text = vim.api.nvim_buf_get_lines(0, line, line + 1, false)[1] or ""
-
-		if vim.fn.visualmode() == "v" then
-			end_col = vim.fn.col("'>")
-			if end_col > #line_text then
-				end_col = #line_text
-			end
-		end
-	end
 	local line_text = vim.api.nvim_buf_get_lines(0, line, line + 1, false)[1] or ""
-	local selected_text = string.sub(line_text, start_col + 1, end_col)
-	print("Debug: '" .. selected_text .. "' from " .. start_col .. " to " .. end_col)
+	if end_col > #line_text then
+		end_col = #line_text
+	end
+	if end_col < start_col then
+		end_col = start_col
+	end
+
+	local selected_text = string.sub(line_text, start_col + 1, end_col + 1)
 	return {
 		line = line,
 		start_col = start_col,
-		end_col = end_col,
+		end_col = end_col + 1,
 		text = selected_text,
 	}
 end
 
 function M.add_highlight()
 	local selection
+	local start_pos = vim.fn.getpos("'<")
+	local end_pos = vim.fn.getpos("'>")
 	local mode = vim.fn.mode()
+	print("Current mode: " .. mode)
 
-	if mode == "v" or mode == "V" or mode == "\22" then
+	if start_pos[2] > 0 and end_pos[2] > 0 and (start_pos[2] ~= end_pos[2] or start_pos[3] ~= end_pos[3]) then
 		selection = get_visual_selection()
 		if not selection then
 			return
 		end
 	else
-		local phrase = vim.fn.expand("<cWORD>")
-		if phrase == "" then
-			print("No phrase under cursor")
-			return
-		end
-
 		local pos = vim.api.nvim_win_get_cursor(0)
 		local line_idx = pos[1] - 1
+		local col = pos[2]
 		local line_content = vim.api.nvim_buf_get_lines(0, line_idx, line_idx + 1, false)[1] or ""
-
-		local start_col = line_content:find(phrase, 1, true)
-		if not start_col then
-			print("Could not locate phrase in line")
-			return
+		local word_start = col
+		local word_end = col
+		while word_start > 0 and not line_content:sub(word_start + 1, word_start + 1):match("%s") do
+			word_start = word_start - 1
 		end
-		start_col = start_col - 1
-		local end_col = start_col + #phrase
-
-		if start_col < 0 or end_col > #line_content or start_col >= end_col then
-			print("Failed to determine phrase boundaries")
-			return
+		if line_content:sub(word_start + 1, word_start + 1):match("%s") then
+			word_start = word_start + 1
 		end
-
+		while word_end < #line_content and not line_content:sub(word_end + 1, word_end + 1):match("%s") do
+			word_end = word_end + 1
+		end
+		local phrase = line_content:sub(word_start + 1, word_end)
 		selection = {
 			line = line_idx,
-			start_col = start_col,
-			end_col = end_col,
+			start_col = word_start,
+			end_col = word_end,
 			text = phrase,
 		}
 	end
@@ -123,8 +115,9 @@ function M.add_highlight()
 	if selection.start_col < 0 then
 		selection.start_col = 0
 	end
-	if selection.end_col > vim.api.nvim_buf_get_lines(0, selection.line, selection.line + 1, false)[1]:len() then
-		selection.end_col = vim.api.nvim_buf_get_lines(0, selection.line, selection.line + 1, false)[1]:len()
+	local line_len = #vim.api.nvim_buf_get_lines(0, selection.line, selection.line + 1, false)[1]
+	if selection.end_col > line_len then
+		selection.end_col = line_len
 	end
 
 	vim.api.nvim_buf_add_highlight(0, ns_id, "KindleHighlight", selection.line, selection.start_col, selection.end_col)
@@ -291,7 +284,6 @@ function M.list_notes()
 		if data.note then
 			line_str = line_str .. string.format(" [Note %d]", data.number)
 			table.insert(lines, line_str)
-
 			for _, note_line in ipairs(vim.split(data.note, "\n")) do
 				table.insert(lines, "    " .. note_line)
 			end
@@ -320,13 +312,11 @@ function M.list_notes()
 		end
 
 		vim.api.nvim_win_close(win, true)
-
 		vim.api.nvim_win_set_cursor(0, { original_line, 0 })
 		vim.cmd("normal! zz")
 	end, { buffer = buf, noremap = true })
 
 	vim.api.nvim_buf_set_name(buf, "Kindle Highlights")
-
 	vim.api.nvim_buf_set_option(buf, "modifiable", false)
 end
 
