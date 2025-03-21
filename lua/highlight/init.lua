@@ -14,30 +14,6 @@ local function get_storage_path()
 	return vim.fn.stdpath("data") .. "/highlight/" .. hash .. ".json"
 end
 
-local function load_data()
-	local path = get_storage_path()
-	if not path then
-		return
-	end
-	local file = io.open(path, "r")
-	if file then
-		local content = file:read("*all")
-		notes = vim.json.decode(content) or {}
-		highlight_count = 0
-		for _, data in pairs(notes) do
-			vim.api.nvim_buf_add_highlight(0, ns_id, "KindleHighlight", data.line, data.start_col, data.end_col)
-			if data.note then
-				highlight_count = math.max(highlight_count, data.number or 0)
-				vim.api.nvim_buf_set_extmark(0, ns_id, data.line, data.end_col, {
-					virt_text = { { " " .. data.number, "Comment" } },
-					virt_text_pos = "overlay",
-				})
-			end
-		end
-		file:close()
-	end
-end
-
 local function save_data()
 	local path = get_storage_path()
 	if not path then
@@ -46,8 +22,63 @@ local function save_data()
 	vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
 	local file = io.open(path, "w")
 	if file then
-		file:write(vim.json.encode(notes))
+		local encoded = vim.json.encode(notes)
+		file:write(encoded)
 		file:close()
+	else
+		vim.api.nvim_echo({ { "Failed to open file for writing: " .. path, "ErrorMsg" } }, true, {})
+	end
+end
+
+local function load_data()
+	local path = get_storage_path()
+	if not path then
+		return
+	end
+	local file = io.open(path, "r")
+	if file then
+		local content = file:read("*all")
+		file:close()
+		local disk_notes = vim.json.decode(content) or {}
+		for key, disk_data in pairs(disk_notes) do
+			if not notes[key] then
+				notes[key] = disk_data
+			else
+				notes[key] = vim.tbl_deep_extend("keep", notes[key], disk_data)
+			end
+		end
+		highlight_count = 0
+		local max_lines = vim.api.nvim_buf_line_count(0) - 1
+		for key, data in pairs(notes) do
+			local target_line = data.line
+			if target_line < 0 then
+				target_line = 0
+			elseif target_line > max_lines then
+				target_line = max_lines
+			end
+			local line_length = #vim.api.nvim_buf_get_lines(0, target_line, target_line + 1, false)[1]
+			if data.start_col < 0 then
+				data.start_col = 0
+			elseif data.start_col > line_length then
+				data.start_col = line_length
+			end
+			if data.end_col < 0 then
+				data.end_col = 0
+			elseif data.end_col > line_length then
+				data.end_col = line_length
+			end
+			vim.api.nvim_buf_add_highlight(0, ns_id, "KindleHighlight", target_line, data.start_col, data.end_col)
+			if data.number and data.number > highlight_count then
+				highlight_count = data.number
+			end
+			if data.note and data.note ~= "" then
+				vim.api.nvim_buf_set_extmark(0, ns_id, target_line, data.end_col, {
+					virt_text = { { " " .. data.number, "Comment" } },
+					virt_text_pos = "overlay",
+				})
+			end
+			data.line = target_line
+		end
 	end
 end
 
@@ -80,7 +111,6 @@ function M.add_highlight()
 	local start_pos = vim.fn.getpos("'<")
 	local end_pos = vim.fn.getpos("'>")
 	local mode = vim.fn.mode()
-	print("Current mode: " .. mode)
 
 	if start_pos[2] > 0 and end_pos[2] > 0 and (start_pos[2] ~= end_pos[2] or start_pos[3] ~= end_pos[3]) then
 		selection = get_visual_selection()
@@ -131,8 +161,6 @@ function M.add_highlight()
 			end_col = selection.end_col,
 		}
 	save_data()
-
-	print('Highlighted "' .. selection.text .. '"')
 end
 
 function M.add_or_show_note()
@@ -142,14 +170,25 @@ function M.add_or_show_note()
 	local key = nil
 
 	for k, data in pairs(notes) do
-		if data.line == line and col >= data.start_col and col < data.end_col then
-			key = k
-			break
+		if data.line == line then
+			if col >= data.start_col and col <= data.end_col then
+				key = k
+				break
+			end
 		end
 	end
 
 	if not key then
-		print("No highlight found at this position")
+		for k, data in pairs(notes) do
+			if data.line == line then
+				key = k
+				break
+			end
+		end
+	end
+
+	if not key then
+		vim.api.nvim_echo({ { "No highlight found on this line", "WarningMsg" } }, true, {})
 		return
 	end
 
@@ -181,32 +220,88 @@ function M.add_or_show_note()
 
 	local function save_note()
 		local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		local note = table.concat(lines, "\n")
-		if note ~= "" and note ~= "Enter note here...\n\n-- Press <Esc> to save and close --" then
+		local cleaned_lines = {}
+		for i, line in ipairs(lines) do
+			if line ~= "-- Press <Esc> to save and close --" and i ~= #lines - 1 then
+				table.insert(cleaned_lines, line)
+			end
+		end
+		local note = table.concat(cleaned_lines, "\n")
+
+		if not notes[key] then
+			vim.api.nvim_win_close(win, true)
+			return
+		end
+
+		local max_lines = vim.api.nvim_buf_line_count(0) - 1
+
+		if note ~= "" and note ~= "Enter note here..." then
 			if not notes[key].number then
 				highlight_count = highlight_count + 1
 				notes[key].number = highlight_count
-				vim.api.nvim_buf_set_extmark(0, ns_id, notes[key].line, notes[key].end_col, {
-					virt_text = { { " " .. highlight_count, "Comment" } },
-					virt_text_pos = "overlay",
-				})
 			end
 			notes[key].note = note
-			print("Note saved: '" .. note .. "'")
-		elseif notes[key].note then
-			notes[key].note = nil
-			notes[key].number = nil
-			vim.api.nvim_buf_clear_namespace(0, ns_id, notes[key].line, notes[key].line + 1)
+
+			local target_line = notes[key].line
+			if target_line < 0 then
+				target_line = 0
+			elseif target_line > max_lines then
+				target_line = max_lines
+			end
+			notes[key].line = target_line
+
+			local line_length = #vim.api.nvim_buf_get_lines(0, target_line, target_line + 1, false)[1]
+			if notes[key].end_col > line_length then
+				notes[key].end_col = line_length
+			end
+			if notes[key].start_col > line_length then
+				notes[key].start_col = line_length
+			end
+
+			vim.api.nvim_buf_clear_namespace(0, ns_id, target_line, target_line + 1)
 			vim.api.nvim_buf_add_highlight(
 				0,
 				ns_id,
 				"KindleHighlight",
-				notes[key].line,
+				target_line,
 				notes[key].start_col,
 				notes[key].end_col
 			)
-			print("Note removed")
+			vim.api.nvim_buf_set_extmark(0, ns_id, target_line, notes[key].end_col, {
+				virt_text = { { " " .. notes[key].number, "Comment" } },
+				virt_text_pos = "overlay",
+			})
+		elseif notes[key].note then
+			notes[key].note = nil
+			notes[key].number = nil
+
+			local target_line = notes[key].line
+			if target_line < 0 then
+				target_line = 0
+			elseif target_line > max_lines then
+				target_line = max_lines
+			end
+			notes[key].line = target_line
+
+			local line_length = #vim.api.nvim_buf_get_lines(0, target_line, target_line + 1, false)[1]
+			if notes[key].end_col > line_length then
+				notes[key].end_col = line_length
+			end
+			if notes[key].start_col > line_length then
+				notes[key].start_col = line_length
+			end
+
+			vim.api.nvim_buf_clear_namespace(0, ns_id, target_line, target_line + 1)
+			vim.api.nvim_buf_add_highlight(
+				0,
+				ns_id,
+				"KindleHighlight",
+				target_line,
+				notes[key].start_col,
+				notes[key].end_col
+			)
 		end
+
 		save_data()
 		vim.api.nvim_buf_set_option(buf, "modified", false)
 		vim.api.nvim_win_close(win, true)
@@ -233,7 +328,7 @@ end
 
 function M.list_notes()
 	if next(notes) == nil then
-		print("No highlights or notes in this file")
+		vim.api.nvim_echo({ { "No highlights or notes in this file", "WarningMsg" } }, true, {})
 		return
 	end
 
@@ -281,7 +376,12 @@ function M.list_notes()
 
 	for _, data in ipairs(sorted_notes) do
 		local line_str = string.format('Line %d: "%s"', data.line + 1, data.text)
-		if data.note then
+		if data.note and data.note ~= "" then
+			if not data.number then
+				highlight_count = highlight_count + 1
+				data.number = highlight_count
+				save_data()
+			end
 			line_str = line_str .. string.format(" [Note %d]", data.number)
 			table.insert(lines, line_str)
 			for _, note_line in ipairs(vim.split(data.note, "\n")) do
@@ -325,7 +425,6 @@ function M.clear_all()
 	notes = {}
 	highlight_count = 0
 	save_data()
-	print("All highlights and notes cleared for this file")
 end
 
 function M.setup(opts)
