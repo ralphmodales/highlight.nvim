@@ -5,13 +5,31 @@ local highlight_count = 0
 
 vim.api.nvim_set_hl(0, "KindleHighlight", { bg = "#ffff00", fg = "#000000" })
 
-local function get_storage_path()
-	local filepath = vim.api.nvim_buf_get_name(0)
-	if filepath == "" then
-		return nil
+local function find_project_root()
+	local current_file = vim.fn.expand("%:p")
+	if current_file == "" then
+		return vim.fn.getcwd()
 	end
-	local hash = vim.fn.sha256(filepath)
-	return vim.fn.stdpath("data") .. "/highlight/" .. hash .. ".json"
+
+	local dir = vim.fn.fnamemodify(current_file, ":h")
+
+	local root_markers = { ".git", ".hg", ".svn", "package.json", "Cargo.toml", ".project_root" }
+
+	while dir ~= "/" and dir ~= "" do
+		for _, marker in ipairs(root_markers) do
+			if vim.fn.isdirectory(dir .. "/" .. marker) == 1 or vim.fn.filereadable(dir .. "/" .. marker) == 1 then
+				return dir
+			end
+		end
+		dir = vim.fn.fnamemodify(dir, ":h")
+	end
+
+	return vim.fn.getcwd()
+end
+
+local function get_storage_path()
+	local project_root = find_project_root()
+	return project_root .. "/.highlights"
 end
 
 local function save_data()
